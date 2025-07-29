@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Post;
 use Inertia\Inertia;
+use App\Models\Comment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -21,24 +22,55 @@ class PostController extends Controller
         ]);
     }
 
-    public function create()
-    {
-        return view('create.index');
+   public function create()
+{
+    return Inertia::render('Posts/Create'); // shows the form
+
+    
+}
+public function moderate($id)
+{
+    $post = Post::with(['comments.user'])->findOrFail($id);
+
+    // Authorization check - make sure current user is moderator
+    if (!auth()->user()->hasRole('moderator')) {
+        abort(403, 'Unauthorized');
     }
 
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'content' => 'required|string',
-        ]);
+    return Inertia::render('Posts/ModerateComments', [
+        'post' => $post,
+        'comments' => $post->comments,
+    ]);
+}
 
-        $validated['user_id'] = auth()->id();
 
-        Post::create($validated);
+public function store(Request $request)
+{
+    $validated = $request->validate([
+        'title' => 'required|string|max:255',
+        'content' => 'required|string',
+    ]);
 
-        return redirect()->route('admin.dashboard')->with('success', 'Post created!');
+    Post::create([
+        'title' => $validated['title'],
+        'content' => $validated['content'],
+        'user_id' => auth()->id(),
+    ]);
+
+    // Role-based redirect
+    $role = auth()->user()->getRoleNames()->first(); // Assuming you're using Spatie
+
+    switch ($role) {
+        case 'admin':
+            return redirect()->route('admin.dashboard')->with('success', 'Post added.');
+        case 'editor':
+            return redirect()->route('editor.dashboard')->with('success', 'Post added.');
+        case 'author':
+            return redirect()->route('author.dashboard')->with('success', 'Post added.');
+        default:
+            return redirect()->route('dashboard')->with('success', 'Post added.');
     }
+}
 
     public function edit($id)
     {
@@ -99,22 +131,38 @@ class PostController extends Controller
         abort(403, 'Unauthorized action.');
     }
 
-    public function show($id)
-    {
-        $post = Post::findOrFail($id);
-        $post->increment('views');
+ public function show($id)
+{
+    $post = Post::with(['comments.user', 'user'])->findOrFail($id);
+    $post->increment('views');
 
-        return view('details.index', ['post' => $post]);
-    }
+    return Inertia::render('Posts/Show', [
+        'post' => $post,
+    ]);
+}
 
-    public function incrementClicked($id)
-    {
-        $post = Post::findOrFail($id);
-        $post->increment('clicked');
+public function incrementClicked($id)
+{
+    $post = Post::findOrFail($id);
+    $post->increment('clicked');
 
-        return redirect()->route('details', $id);
-    }
+    return redirect()->route('posts.show', $id);
+}
 
+public function storeComment(Request $request, $id)
+{
+    $request->validate([
+        'content' => 'required|string|max:1000',
+    ]);
+
+    Comment::create([
+        'post_id' => $id,
+        'user_id' => auth()->id(),
+        'content' => $request->input('content'),
+    ]);
+
+    return back()->with('success', 'Comment added.');
+}
     public function search(Request $request)
     {
         $query = $request->input('query');
@@ -133,15 +181,20 @@ class PostController extends Controller
             ->paginate(10)
             ->appends(['query' => $query]);
 
-        return view('posts.search_results', compact('posts', 'query'));
+        return Inertia::render('Posts/SearchResults', [
+            'posts' => $posts,
+            'query' => $query,
+        ]);
     }
 
     public function moderatorIndex()
     {
         $posts = Post::with('user')->orderBy('created_at', 'desc')->paginate(10);
-        return view('moderator.posts.index', compact('posts'));
-    }
 
+        return Inertia::render('Moderator/Posts/Index', [
+            'posts' => $posts,
+        ]);
+    }
     public function approve($id)
     {
         $post = Post::findOrFail($id);
@@ -151,4 +204,6 @@ class PostController extends Controller
 
         return redirect()->back()->with('success', 'Post approved and published.');
     }
+    
+
 }
